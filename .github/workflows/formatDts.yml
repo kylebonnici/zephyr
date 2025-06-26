@@ -31,26 +31,33 @@ jobs:
 
       - name: Run DTS Linter
         id: run-linter
+        shell: bash
         run: |
-          # Get a list of all .dts, .dtsi, and .overlay files tracked by git
+          set -euo pipefail
+
+          # Get all tracked DTS-like files
           mapfile -t FILES < <(git ls-files '*.dts' '*.dtsi' '*.overlay')
 
-          # Exit early if no files found
           if [ ${#FILES[@]} -eq 0 ]; then
             echo "No DTS files found to lint."
             exit 0
           fi
 
           echo "Found DTS files:"
-          printf '%s\n' "${FILES[@]}"
+          printf '  %s\n' "${FILES[@]}"
 
-          echo "Starting dts-linter:"
-          # Run the linter with all files as separate args
+          echo "Running dts-linter..."
+          # Run the linter
+          set +e
           dts-linter \
             --outFile ./diff \
             --diagnostics false \
-            --files "${FILES[@]}" || echo "EXIT_CODE=$?" >> $GITHUB_ENV
-          echo "Done"
+            --files "${FILES[@]}"
+          EXIT_CODE=$?
+          set -e
+
+          echo "Linter finished with exit code: $EXIT_CODE"
+          echo "EXIT_CODE=$EXIT_CODE" >> $GITHUB_ENV
 
       - name: Upload diff artifact
         uses: actions/upload-artifact@v4
