@@ -37,7 +37,7 @@ jobs:
             \( -name "*.dts" -o -name "*.dtsi" -o -name "*.overlay" \) \
             -print0 | xargs -0 -I{} printf "\"%s\" " "{}")
 
-          node --max-old-space-size=4096 $(which ts-node) src/dts-linter.ts \
+          dts-linter \
             --outFile ./diff \
             --diagnostics false \
             --files $FILES || echo "EXIT_CODE=$?" >> $GITHUB_ENV
