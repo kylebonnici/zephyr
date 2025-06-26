@@ -27,7 +27,7 @@ jobs:
           node-version: "20"
 
       - name: Install dependencies
-        run: npm install dts-linter ts-node
+        run: npm i -g dts-linter ts-node
 
       - name: Run DTS Linter
         id: run-linter
