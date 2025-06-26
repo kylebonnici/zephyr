@@ -32,10 +32,12 @@ jobs:
       - name: Run DTS Linter
         id: run-linter
         run: |
-          FILES=$(find /opt/nordic/ncs/v3.0.2 \
-            -type f \
-            \( -name "*.dts" -o -name "*.dtsi" -o -name "*.overlay" \) \
-            -print0 | xargs -0 -I{} printf "\"%s\" " "{}")
+          FILES=$(git ls-files '*.dts' '*.dtsi' '*.overlay' | xargs printf "\"%s\" ")
+
+          if [ -z "$FILES" ]; then
+            echo "No DTS files found to lint."
+            exit 0
+          fi
 
           dts-linter \
             --outFile ./diff \
