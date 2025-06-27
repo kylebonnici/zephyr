@@ -12,14 +12,22 @@ on:
       - "**/*.dtsi"
       - "**/*.overlay"
   workflow_dispatch:
+    inputs:
+      files:
+        description: "Comma-separated list of DTS files to lint"
+        required: false
+        default: ""
 
 jobs:
-  dts-lint:
+  dts-compliance:
+    name: DTS Compliance Check
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required to compare branches in PRs
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -27,15 +35,31 @@ jobs:
           node-version: "20"
 
       - name: Install dependencies
-        run: npm i -g dts-linter
+        run: npm i -g dts-linter@0.0.0-alpha4
 
-      - name: Find DTS files
+      - name: Determine DTS files to format
         id: find-files
         shell: bash
         run: |
           set -euo pipefail
-          echo "Finding DTS files..."
-          git ls-files '*.dts' '*.dtsi' '*.overlay' | xargs realpath > dts-files.txt
+
+          # Manual input from workflow_dispatch
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.files }}" ]]; then
+            echo "Using manually provided files..."
+            echo "${{ github.event.inputs.files }}" | tr ',' '\n' | sed 's|^ *||;s| *$||' > dts-files.txt
+          else
+            echo "Detecting changed DTS files..."
+
+            # For PRs, get the diff from the base branch
+            if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+              git fetch origin "$GITHUB_BASE_REF"
+              git diff --name-only origin/"$GITHUB_BASE_REF"...HEAD | grep -E '\.dts$|\.dtsi$|\.overlay$' > dts-files.txt || true
+
+            # For pushes, get the files changed in the last commit
+            else
+              git diff --name-only HEAD~1 | grep -E '\.dts$|\.dtsi$|\.overlay$' > dts-files.txt || true
+            fi
+          fi
 
           if [ ! -s dts-files.txt ]; then
             echo "No DTS files found to lint."
@@ -53,15 +77,32 @@ jobs:
           set -euo pipefail
           mapfile -t FILES < dts-files.txt
 
-          echo "Running dts-linter..."
+          echo "Resolving absolute paths..."
+          BINDINGS=$(realpath zephyr/dts/bindings)
+          INCLUDES=(
+            "$(realpath zephyr/dts)"
+            "$(realpath zephyr/dts/arm)"
+            "$(realpath zephyr/dts/arm64)"
+            "$(realpath zephyr/dts/riscv)"
+            "$(realpath zephyr/dts/common)"
+            "$(realpath zephyr/include)"
+          )
+
+          FILE_ARGS=$(printf -- '--files %s ' "${FILES[@]}")
+          INCLUDE_ARGS=$(printf -- '--includes %s ' "${INCLUDES[@]}")
+
+          CMD="dts-linter --outFile ./diff --bindings $BINDINGS $INCLUDE_ARGS --formating --diagnostics $FILE_ARGS"
+
+          echo "Running dts-linter with command:"
+          echo "$CMD"
+
           set +e
-          dts-linter --outFile ./diff --formating $(printf -- '--files %s ' "${FILES[@]}")
+          eval "$CMD"
           EXIT_CODE=$?
           set -e
 
           echo "Linter finished with exit code: $EXIT_CODE"
           echo "EXIT_CODE=$EXIT_CODE" >> $GITHUB_ENV
-
       - name: Upload diff artifact
         uses: actions/upload-artifact@v4
         with:
