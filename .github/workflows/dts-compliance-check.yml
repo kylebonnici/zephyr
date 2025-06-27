@@ -111,7 +111,7 @@ jobs:
           FILE_ARGS=$(printf -- '--files %s ' "${FILES[@]}")
           INCLUDE_ARGS=$(printf -- '--includes %s ' "${INCLUDES[@]}")
 
-          LOG_LEVEL="${{ github.event.inputs.logLevel || 'none' }}"
+          LOG_LEVEL="${{ github.event.inputs.logLevel || 'issues' }}"
           CMD="dts-linter --outFile ./diff --bindings $BINDINGS $INCLUDE_ARGS --formating --diagnostics --logLevel $LOG_LEVEL $FILE_ARGS"
 
           echo "Running dts-linter with command:"
