@@ -20,7 +20,7 @@ on:
       logLevel:
         description: "Log level for dts-linter (none | verbose | issues)"
         required: false
-        default: "none"
+        default: "issues"
 
 jobs:
   dts-compliance:
