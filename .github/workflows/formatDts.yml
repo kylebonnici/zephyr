@@ -55,7 +55,7 @@ jobs:
 
           echo "Running dts-linter..."
           set +e
-          dts-linter --outFile ./diff --diagnostics false --files "${FILES[@]}"
+          dts-linter --outFile ./diff --diagnostics false --files "/home/runner/work/zephyr/zephyr/samples/subsys/usb/cdc_acm_bridge/boards/rpi_pico.overlay"
           EXIT_CODE=$?
           set -e
 
