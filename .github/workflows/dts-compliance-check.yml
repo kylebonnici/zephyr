@@ -93,14 +93,14 @@ jobs:
           mapfile -t FILES < dts-files.txt
 
           echo "Resolving absolute paths for bindings and includes..."
-          BINDINGS=$(realpath zephyr/dts/bindings)
+          BINDINGS=$(realpath dts/bindings)
           INCLUDES=(
-            "$(realpath zephyr/dts)"
-            "$(realpath zephyr/dts/arm)"
-            "$(realpath zephyr/dts/arm64)"
-            "$(realpath zephyr/dts/riscv)"
-            "$(realpath zephyr/dts/common)"
-            "$(realpath zephyr/include)"
+            "$(realpath dts)"
+            "$(realpath dts/arm)"
+            "$(realpath dts/arm64)"
+            "$(realpath dts/riscv)"
+            "$(realpath dts/common)"
+            "$(realpath include)"
           )
 
           FILE_ARGS=$(printf -- '--files %s ' "${FILES[@]}")
