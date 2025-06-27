@@ -29,29 +29,33 @@ jobs:
       - name: Install dependencies
         run: npm i -g dts-linter ts-node
 
-      - name: Run DTS Linter
-        id: run-linter
+      - name: Find DTS files
+        id: find-files
         shell: bash
         run: |
           set -euo pipefail
+          echo "Finding DTS files..."
+          git ls-files '*.dts' '*.dtsi' '*.overlay' | xargs realpath > dts-files.txt
 
-          # Convert DTS-related tracked files to absolute paths
-          mapfile -t FILES < <(git ls-files '*.dts' '*.dtsi' '*.overlay' | xargs realpath)
-
-          if [ ${#FILES[@]} -eq 0 ]; then
+          if [ ! -s dts-files.txt ]; then
             echo "No DTS files found to lint."
-            exit 0
+            echo "::set-output name=empty::true"
+          else
+            echo "Found DTS files:"
+            cat dts-files.txt
+            echo "::set-output name=empty::false"
           fi
 
-          echo "Found DTS files:"
-          printf '  %s\n' "${FILES[@]}"
+      - name: Run DTS Linter
+        if: steps.find-files.outputs.empty != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < dts-files.txt
 
           echo "Running dts-linter..."
           set +e
-          dts-linter \
-            --outFile ./diff \
-            --diagnostics false \
-            --files "${FILES[@]}"
+          dts-linter --outFile ./diff --diagnostics false --files "${FILES[@]}"
           EXIT_CODE=$?
           set -e
 
