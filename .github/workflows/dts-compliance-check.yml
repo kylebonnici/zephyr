@@ -1,4 +1,4 @@
-name: Format DTS
+name: DTS Compliance Check
 
 on:
   push:
