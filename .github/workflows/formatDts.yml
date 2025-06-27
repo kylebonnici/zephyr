@@ -55,7 +55,7 @@ jobs:
 
           echo "Running dts-linter..."
           set +e
-          dts-linter --outFile ./diff --formating false --files "/home/runner/work/zephyr/zephyr/tests/drivers/adc/adc_api/boards/nrf52840dk_nrf52840.overlay"
+          dts-linter --outFile ./diff --formating --files "/home/runner/work/zephyr/zephyr/tests/drivers/adc/adc_api/boards/nrf52840dk_nrf52840.overlay"
           EXIT_CODE=$?
           set -e
 
