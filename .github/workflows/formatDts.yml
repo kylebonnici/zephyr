@@ -55,7 +55,7 @@ jobs:
 
           echo "Running dts-linter..."
           set +e
-          dts-linter --outFile ./diff --formating $(printf -- '--files "%s" ' "${FILES[@]}")
+          dts-linter --outFile ./diff --formating $(printf -- '--files %s ' "${FILES[@]}")
           EXIT_CODE=$?
           set -e
 
