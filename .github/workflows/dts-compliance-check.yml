@@ -39,7 +39,7 @@ jobs:
           node-version: "20"
 
       - name: Install dependencies
-        run: npm i -g dts-linter@0.0.0-alpha5
+        run: npm i -g dts-linter@0.0.0-alpha6
 
       - name: Determine DTS files to format
         id: find-files
