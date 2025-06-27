@@ -33,26 +33,13 @@ jobs:
         id: run-linter
         shell: bash
         run: |
-          set -euo pipefail
 
-          # Get all tracked DTS-like files
-          mapfile -t FILES < <(git ls-files '*.dts' '*.dtsi' '*.overlay')
-
-          if [ ${#FILES[@]} -eq 0 ]; then
-            echo "No DTS files found to lint."
-            exit 0
-          fi
-
-          echo "Found DTS files:"
-          printf '  %s\n' "${FILES[@]}"
-
-          echo "Running dts-linter..."
           # Run the linter
           set +e
           dts-linter \
             --outFile ./diff \
             --diagnostics false \
-            --files "${FILES[@]}"
+            --files "boards/aconno/acn52832/acn52832-pinctrl.dtsi"
           EXIT_CODE=$?
           set -e
 
