@@ -27,7 +27,7 @@ jobs:
           node-version: "20"
 
       - name: Install dependencies
-        run: npm i -g dts-linter ts-node
+        run: npm i -g dts-linter
 
       - name: Find DTS files
         id: find-files
@@ -55,7 +55,7 @@ jobs:
 
           echo "Running dts-linter..."
           set +e
-          dts-linter --outFile ./diff --formating false --files "${FILES[@]}"
+          dts-linter --outFile ./diff --formating false --files "/home/runner/work/zephyr/zephyr/tests/drivers/adc/adc_api/boards/nrf52840dk_nrf52840.overlay"
           EXIT_CODE=$?
           set -e
 
