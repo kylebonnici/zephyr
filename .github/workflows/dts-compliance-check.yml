@@ -17,6 +17,10 @@ on:
         description: "Comma-separated list of DTS files to lint"
         required: false
         default: ""
+      logLevel:
+        description: "Log level for dts-linter (none | verbose | issues)"
+        required: false
+        default: "none"
 
 jobs:
   dts-compliance:
@@ -27,7 +31,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Required to compare branches in PRs
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -106,7 +110,8 @@ jobs:
           FILE_ARGS=$(printf -- '--files %s ' "${FILES[@]}")
           INCLUDE_ARGS=$(printf -- '--includes %s ' "${INCLUDES[@]}")
 
-          CMD="dts-linter --outFile ./diff --bindings $BINDINGS $INCLUDE_ARGS --formating --diagnostics $FILE_ARGS"
+          LOG_LEVEL="${{ github.event.inputs.logLevel || 'none' }}"
+          CMD="dts-linter --outFile ./diff --bindings $BINDINGS $INCLUDE_ARGS --formating --diagnostics --logLevel $LOG_LEVEL $FILE_ARGS"
 
           echo "Running dts-linter with command:"
           echo "$CMD"
