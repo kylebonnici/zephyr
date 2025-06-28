@@ -13,9 +13,9 @@ on:
         required: false
         default: ""
       logLevel:
-        description: "Log level for dts-linter (none | verbose | issues)"
+        description: "Log level for dts-linter (none | verbose)"
         required: false
-        default: "issues"
+        default: "none"
 
 permissions:
   contents: read
@@ -37,7 +37,7 @@ jobs:
           node-version: "20"
 
       - name: Install dependencies
-        run: npm i -g dts-linter@0.0.0-alpha6
+        run: npm i -g dts-linter@0.0.0-alpha7
 
       - name: Determine DTS files to format
         id: find-files
@@ -109,8 +109,8 @@ jobs:
           FILE_ARGS=$(printf -- '--files %s ' "${FILES[@]}")
           INCLUDE_ARGS=$(printf -- '--includes %s ' "${INCLUDES[@]}")
 
-          LOG_LEVEL="${{ github.event.inputs.logLevel || 'issues' }}"
-          CMD="dts-linter --outFile ./diff --bindings $BINDINGS $INCLUDE_ARGS --formating --diagnostics --logLevel $LOG_LEVEL $FILE_ARGS"
+          LOG_LEVEL="${{ github.event.inputs.logLevel || 'none' }}"
+          CMD="dts-linter --outFile ./diff --bindings $BINDINGS $INCLUDE_ARGS --formatting --diagnostics --logLevel $LOG_LEVEL $FILE_ARGS"
 
           echo "Running dts-linter with command:"
           echo "$CMD"
