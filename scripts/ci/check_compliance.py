@@ -491,6 +491,36 @@ class DevicetreeBindingsCheck(ComplianceTest):
                     "'required: false' is redundant, please remove"
                 )
 
+class DevicetreeLintingCheck(ComplianceTest):
+    """
+    Checks if we are introducing syntax or formatting issues to devicetree files.
+    """
+    name = "DevicetreeLinting"
+    doc = "See https://docs.zephyrproject.org/latest/contribute/style/devicetree.html for more details."
+
+    def run(self):
+        # Get changed DTS files
+        dts_files = [
+            file for file in get_files(filter="d")
+            if file.endswith((".dts", ".dtsi", ".overlay"))
+        ]
+
+        if not dts_files:
+            self.skip('No DTS')
+
+        cmd = ["npx", "dts-linter", "--format"]
+        for file in dts_files:
+            cmd.extend(["--files", file])
+
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, cwd=GIT_TOP)
+        except subprocess.CalledProcessError as ex:
+            output = ex.output.decode("utf-8")
+            if output.strip():
+                self.failure(f"dts-linter found issues:\n{output}")
+            else:
+                self.failure("dts-linter failed with no output. Make sure you install Node.JS and then run npm ci inside ZEPHYR_BASE")
+
 class KconfigCheck(ComplianceTest):
     """
     Checks is we are introducing any new warnings/errors with Kconfig,

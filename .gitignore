@@ -112,3 +112,6 @@ SysbuildKconfigBasicNoModules.txt
 TextEncoding.txt
 YAMLLint.txt
 ZephyrModuleFile.txt
+
+# Node dependecies
+node_modules
