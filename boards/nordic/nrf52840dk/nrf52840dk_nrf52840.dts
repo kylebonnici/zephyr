@@ -20,16 +20,22 @@
 		zephyr,uart-mcumgr = &uart0;
 		zephyr,bt-mon-uart = &uart0;
 		zephyr,bt-c2h-uart = &uart0;
-		zephyr,ieee802154 = &ieee802154;
+		zephyr,ieee802154 = &ieee802154   ;
 		zephyr,boot-mode = &boot_mode0;
+
+
+
 	};
 
 	leds {
 		compatible = "gpio-leds";
 
-		led0: led_0 {
+		led0: led_0   {
 			gpios = <&gpio0 13 GPIO_ACTIVE_LOW>;
+
+
 			label = "Green LED 0";
+
 		};
 
 		led1: led_1 {
