@@ -498,6 +498,31 @@ class DevicetreeLintingCheck(ComplianceTest):
     name = "DevicetreeLinting"
     doc = "See https://docs.zephyrproject.org/latest/contribute/style/devicetree.html for more details."
 
+    def _stream_json_output(self, cmd, cwd=None):
+        """Stream and parse JSON output line by line"""        
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            cwd=cwd or GIT_TOP
+        )
+        
+        results = []
+        
+        for line in process.stdout:
+            line = line.strip()
+            if line:
+                try:
+                    json_data = json.loads(line)
+                    results.append(json_data)
+                    yield json_data  # Yield each parsed JSON object
+                except json.JSONDecodeError:
+                    # Skip non-JSON lines
+                    continue
+        process.wait()
+
     def run(self):
         # Get changed DTS files
         dts_files = [
@@ -508,12 +533,25 @@ class DevicetreeLintingCheck(ComplianceTest):
         if not dts_files:
             self.skip('No DTS')
 
-        cmd = ["npx", "dts-linter", "--format"]
+        cmd = ["npx", "dts-linter", "--outputType", "json", "--format"]
         for file in dts_files:
             cmd.extend(["--files", file])
 
         try:
-            subprocess.run(cmd, check=True, capture_output=True, cwd=GIT_TOP)
+            for json_obj in self._stream_json_output(cmd):
+                level = json_obj.get("level", "unknown")
+                message = json_obj.get("message", "")
+                
+                if level == "info":
+                    logging.info(message)
+                else:
+                    title = json_obj.get("title", "")
+                    file = json_obj.get("file", "")
+                    line = json_obj.get("startLine", None)
+                    col = json_obj.get("startCol", None)
+                    end_line = json_obj.get("endLine", None)
+                    end_col = json_obj.get("endCol", None)
+                    self.fmtd_failure(level,title,file, line, col, message, end_line, end_col)
         except subprocess.CalledProcessError as ex:
             output = ex.output.decode("utf-8")
             if output.strip():
