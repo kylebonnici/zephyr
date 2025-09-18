@@ -510,6 +510,8 @@ class DevicetreeLintingCheck(ComplianceTest):
             cwd=cwd or GIT_TOP
         )
 
+        print(f"JSON command: {result}")
+
         if not result.stdout.strip():
             return None
         
@@ -530,28 +532,26 @@ class DevicetreeLintingCheck(ComplianceTest):
             self.skip('No DTS')
 
         temp_patch_files = []
-        batch_size = 100  # adjust as needed
+        batch_size = 1  # adjust as needed
 
         for i in range(0, len(dts_files), batch_size):
             batch = dts_files[i:i + batch_size]
 
             # use a temporary file for each batch
-            temp_patch = tempfile.NamedTemporaryFile(delete=False, suffix=".patch")
-            temp_patch.close()
-            temp_patch_files.append(temp_patch.name)
+            temp_patch = f"dts_linter_{i}.patch"
+            temp_patch_files.append(temp_patch)
 
             cmd = [
-                "npx", "--no", "dts-linter",
+                "npx", "--no", "dts-linter", "--",
                 "--outputFormat", "json",
                 "--format",
-                "--patchFile", temp_patch.name,
+                "--patchFile", temp_patch,
             ]
             for file in batch:
                 cmd.extend(["--file", file])
 
             try:
                 json_output = self._parse_json_output(cmd)
-
                 if json_output and "issues" in json_output:
                     cwd = json_output.get("cwd", "")
                     logging.info(f"Processing issues from: {cwd}")
@@ -584,6 +584,7 @@ class DevicetreeLintingCheck(ComplianceTest):
         # merge all temp patch files into one
         with open("dts_linter.patch", "wb") as final_patch:
             for patch in temp_patch_files:
+                print(f"open: {patch}")
                 with open(patch, "rb") as f:
                     shutil.copyfileobj(f, final_patch)
 
