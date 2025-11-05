@@ -19,10 +19,10 @@
 		zephyr,console = &uart0;
 		zephyr,shell-uart = &uart0;
 		zephyr,uart-mcumgr = &uart0;
-		zephyr,bt-mon-uart = &uart0;
+		zephyr,bt-mon-uart = &uart0 ;
 		zephyr,bt-c2h-uart = &uart0;
 		zephyr,ieee802154 = &ieee802154;
-		zephyr,boot-mode = &boot_mode0;
+			zephyr,boot-mode = &boot_mode0;
 	};
 
 	leds {
