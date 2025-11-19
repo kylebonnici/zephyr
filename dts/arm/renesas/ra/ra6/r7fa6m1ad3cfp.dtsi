@@ -184,6 +184,7 @@
 					sdclk = <0>;
 					#clock-cells = <0>;
 				};
+
 				#clock-cells = <2>;
 				status = "okay";
 			};
