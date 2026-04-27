@@ -251,6 +251,9 @@ class ComplianceTest:
         # always restored form the element tree, the subclass is lost upon
         # restoring
         self.fmtd_failures = []
+        # Per-test severity summary used by CI post-processing
+        self.has_error = False
+        self.has_warning = False
 
     def _result(self, res, text):
         res.text = text.rstrip()
@@ -287,6 +290,7 @@ class ComplianceTest:
         """
         fail = Failure(msg or f'{type(self).name} issues', type_)
         self._result(fail, text)
+        self.has_error = True
 
     def fmtd_failure(
         self, severity, title, file, line=None, col=None, desc="", end_line=None, end_col=None
@@ -299,6 +303,11 @@ class ComplianceTest:
         fail = FmtdFailure(severity, title, file, line, col, desc, end_line, end_col)
         self._result(fail, fail.text)
         self.fmtd_failures.append(fail)
+        sev = (severity or "").lower()
+        if sev in ("error", "failure"):
+            self.has_error = True
+        elif sev in ("warning", "notice"):
+            self.has_warning = True
 
 
 class EndTest(Exception):
@@ -864,7 +873,17 @@ class DevicetreeStaticCheck(ComplianceTest):
                 col = issue.get("startCol", None)
                 end_line = issue.get("endLine", None)
                 end_col = issue.get("endCol", None)
-                self.fmtd_failure("error" if level == "error" else "warning", title, file, line, col, message, end_line, end_col)
+                level = "error" if level == "error" else "warning"
+                self.fmtd_failure(
+                    level, 
+                    title,
+                    file,
+                    line,
+                    col,
+                    message,
+                    end_line,
+                    end_col,
+                )
 
     def build_index(self, root="."):
         """
@@ -3447,6 +3466,7 @@ def _main(args):
 
     included = list(map(lambda x: x.lower(), args.module))
     excluded = list(map(lambda x: x.lower(), args.exclude_module))
+    case_levels = {}
 
     for testcase in inheritors(ComplianceTest):
         # "Modules" and "testcases" are the same thing. Better flags would have
@@ -3474,6 +3494,17 @@ def _main(args):
             for res in test.fmtd_failures:
                 annotate(res, test.doc)
 
+        # Record severity level per test case for workflow post-processing.
+        # error: at least one error/failure
+        # warnings: only warnings/notices
+        # clean: no findings
+        if test.has_error:
+            case_levels[test.name] = "error"
+        elif test.has_warning:
+            case_levels[test.name] = "warning"
+        else:
+            case_levels[test.name] = "clean"
+
         suite.add_testcase(test.case)
 
     if args.output:
@@ -3481,6 +3512,10 @@ def _main(args):
         xml.add_testsuite(suite)
         xml.update_statistics()
         xml.write(args.output, pretty=True)
+
+    # Export per-test severity levels for check-warns in CI.
+    with open("compliance_case_levels.json", "w", encoding="utf-8") as f:
+        json.dump(case_levels, f, sort_keys=True, indent=2)
 
     failed_cases = []
     warning_cases = []
