@@ -77,6 +77,7 @@ target/
 
 # CI output
 compliance.xml
+compliance_case_levels.json
 dts_linter.patch
 _error.types
 
