@@ -18,6 +18,7 @@ import sys
 import tempfile
 import textwrap
 import traceback
+from collections import defaultdict, deque
 from collections.abc import Iterable
 from itertools import takewhile
 from pathlib import Path, PurePath
@@ -232,6 +233,9 @@ class ComplianceTest:
         # always restored form the element tree, the subclass is lost upon
         # restoring
         self.fmtd_failures = []
+        # Per-test severity summary used by CI post-processing
+        self.has_error = False
+        self.has_warning = False
 
     def _result(self, res, text):
         res.text = text.rstrip()
@@ -268,6 +272,7 @@ class ComplianceTest:
         """
         fail = Failure(msg or f'{type(self).name} issues', type_)
         self._result(fail, text)
+        self.has_error = True
 
     def fmtd_failure(
         self, severity, title, file, line=None, col=None, desc="", end_line=None, end_col=None
@@ -280,6 +285,11 @@ class ComplianceTest:
         fail = FmtdFailure(severity, title, file, line, col, desc, end_line, end_col)
         self._result(fail, fail.text)
         self.fmtd_failures.append(fail)
+        sev = (severity or "").lower()
+        if sev in ("error", "failure"):
+            self.has_error = True
+        elif sev in ("warning", "notice"):
+            self.has_warning = True
 
 
 class EndTest(Exception):
@@ -698,6 +708,380 @@ class DevicetreeLintingCheck(ComplianceTest):
         # cleanup
         for patch in temp_patch_files:
             os.remove(patch)
+
+
+class DevicetreeStaticCheck(ComplianceTest):
+    """
+    Checks if we are introducing regression with other files
+    that use these touched devicetree files.
+    """
+
+    INCLUDE_PATTERN = re.compile(r'#include\s+[<"]([^">]+)[>"]')
+    name = "DevicetreeStaticCheck"
+    doc = "See https://www.devicetree.org/specifications/ and bindings usage for more details."
+    NPX_EXECUTABLE = "npx"
+    prefix = ZEPHYR_BASE / "scripts" / "ci"
+
+    def ensure_npx(self) -> bool:
+        if not (npx_executable := shutil.which(self.NPX_EXECUTABLE)):
+            return False
+        try:
+            self.npx_exe = npx_executable
+            # --no prevents npx from fetching from registry
+            subprocess.run(
+                [self.npx_exe, "--prefix", self.prefix, "--no", 'dts-linter', "--", "--version"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+                text=True,
+            )
+            return True
+        except subprocess.CalledProcessError:
+            return False
+
+    def _parse_json_output(self, cmd, cwd=None):
+        """Run command and parse single JSON output with issues array"""
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            text=True,
+            cwd=cwd or GIT_TOP,
+        )
+
+        if not result.stdout.strip():
+            return None
+
+        try:
+            json_data = json.loads(result.stdout)
+            return json_data
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"Failed to parse dts-linter JSON output: {e}") from e
+
+    def _process_json_output(self, json_output: dict):
+        if "issues" not in json_output:
+            return
+
+        cwd = json_output.get("cwd", "")
+        logging.info(f"Processing issues from: {cwd}")
+
+        for issue in json_output["issues"]:
+            level = issue.get("level", "unknown")
+            message = issue.get("message", "")
+
+            if level == "info":
+                logging.info(message)
+            else:
+                title = issue.get("title", level)
+                file = issue.get("file", "")
+                line = issue.get("startLine", None)
+                col = issue.get("startCol", None)
+                end_line = issue.get("endLine", None)
+                end_col = issue.get("endCol", None)
+                level = "error" if level == "error" else "warning"
+                self.fmtd_failure(
+                    level, 
+                    title,
+                    file,
+                    line,
+                    col,
+                    message,
+                    end_line,
+                    end_col,
+                )
+
+    def build_index(self, root="."):
+        """
+        Build an dependency map index for every devicetree file.
+        Each entry will contain all the files that depend on it.
+        Example: foo.dts included by bar.dts and baz.dtsi will have an entry like:
+        Two entries in the index:
+        {
+            "bar.dts": {"foo.dts"},
+            "baz.dtsi": {"foo.dts"}
+        }
+        This allows us to determine that if bar.dts is touched then foo.dts is also affected.
+        """
+        index: defaultdict[str, set[str]] = defaultdict(set[str])
+
+        for dirpath, _, filenames in os.walk(root):
+            for filename in filenames:
+                if not (filename.endswith(".dts") or filename.endswith(".dtsi")):
+                    continue
+
+                full_path = os.path.join(dirpath, filename)
+
+                try:
+                    with open(full_path, encoding="utf-8", errors="ignore") as f:
+                        for line in f:
+                            match = self.INCLUDE_PATTERN.search(line)
+                            if match:
+                                included_path = match.group(1)
+                                included_name = os.path.basename(included_path)
+                                index[included_name].add(full_path)
+                except Exception:
+                    continue
+
+        return index
+
+    def bfs_dependencies(self, touched_files: list[str], index: defaultdict[str, set[str]]):
+        visited = set[str]()
+        queue = deque(touched_files)
+
+        while queue:
+            current = queue.popleft()
+
+            if current in visited:
+                continue
+            visited.add(current)
+
+            basename = os.path.basename(current)
+
+            for parent in index.get(basename, []):
+                if parent not in visited:
+                    queue.append(parent)
+
+        return visited
+
+    def find_board_files(self, files: set[str]):
+        result = set[str]()
+        for f in files:
+            if f.endswith(".dts"):
+                result.add(f)
+        return sorted(result)
+
+    def get_board_dir(self, path: str):
+        parts = path.split(os.sep)
+        return os.sep.join(parts[:-1])
+
+    def get_west_board_info(self, board_dir: str):
+        result = subprocess.run(
+            [
+                "west",
+                "boards",
+                f"--board-dir={board_dir}",
+                '--format={name}:{revisions}:{revision_default}:{qualifiers}:{vendor}',
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        boards = {}
+
+        for line in result.stdout.splitlines():
+            parts = line.strip().split(":")
+
+            if len(parts) < 5:
+                continue
+
+            name, revisions_str, default_rev, qualifiers, vendor = parts
+
+            def clean(value):
+                return None if value in ("", "None") else value
+
+            # revisions
+            if revisions_str and revisions_str != "None":
+                revisions = [r for r in revisions_str.split(",") if r and r != "None"]
+            else:
+                revisions = []
+
+            # default revision
+            default_rev = clean(default_rev)
+
+            # qualifiers
+            if qualifiers and qualifiers != "None":
+                qualifiers = [q for q in qualifiers.split(",") if q and q != "None"]
+            else:
+                qualifiers = []
+
+            boards[name] = {
+                "revisions": revisions,
+                "default": default_rev,
+                "qualifiers": qualifiers,
+                "vendor": vendor if vendor != "None" else None,
+            }
+
+        return boards
+
+    def get_vendor_skiplist(self) -> set[str]:
+        skiplist_file = self.prefix / "dtsVendorsBlackList.txt"
+        if not skiplist_file.is_file():
+            return set()
+        # Reuse helper already in this file
+        return {v for v in get_set_from_file(skiplist_file) if v}
+
+    def build_json(self, board_files: list[str], skip_vendors: set[str]):
+        results = []
+        skip_vendors = skip_vendors or set()
+        board_dirs = set[str]()
+
+        for bf in board_files:
+            board_dir = self.get_board_dir(bf)
+            board_dirs.add(board_dir)
+
+        west_cache = {}
+
+        for bd in board_dirs:
+            west_cache[bd] = self.get_west_board_info(bd)
+
+        for bf in board_files:
+            board_dir = self.get_board_dir(bf)
+            west_info = west_cache.get(board_dir, {})
+
+            base = os.path.splitext(bf)[0]
+            filename = os.path.splitext(os.path.basename(bf))[0]
+
+            for board_name, meta in west_info.items():
+                if not filename.startswith(f"{board_name}_"):
+                    continue
+
+                vendor = meta.get("vendor")
+                if vendor in skip_vendors:
+                    logging.info(f"Skipping board '{bf}' Vendor '{vendor}' in skip list")
+                    continue
+
+                revisions = meta.get("revisions", [])
+                default_rev = meta.get("default")
+
+                overlay_runs = None
+                if revisions:
+                    overlay_runs = [
+                        [f"{base}_{rev.replace('.', '_')}.overlay"] for rev in revisions
+                    ]
+
+                entry = {
+                    "mainFile": bf,
+                }
+
+                if overlay_runs:
+                    entry["overlayRuns"] = overlay_runs
+
+                if default_rev:
+                    entry["onlyRunWithOverlays"] = True
+
+                results.append(entry)
+
+        return results
+
+    def run_hello_world_build(self, build_dir: Path):
+        sample_dir = Path(ZEPHYR_BASE) / "samples" / "hello_world"
+
+        if not sample_dir.exists():
+            raise FileNotFoundError(f"hello_world sample not found at {sample_dir}")
+
+        subprocess.run(
+            [
+                "cmake",
+                "-DBOARD=native_sim",
+                "-B",
+                str(build_dir),
+                "native_sim",
+                "-S",
+                str(sample_dir),
+                "-DMODULES=dts_config",
+                "-P",
+                os.path.join(ZEPHYR_BASE, "cmake", "package_helper.cmake"),
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+
+    def parse_build_info(self, build_dir: Path):
+        build_info_path = build_dir / "build_info.yml"
+
+        if not build_info_path.exists():
+            raise FileNotFoundError(f"build_info.yml not found in {build_dir}")
+
+        with open(build_info_path, encoding="utf-8") as f:
+            return yaml.safe_load(f)
+
+    def extract_context(self, build_info: dict):
+        cmake = build_info.get("cmake", {})
+        dts = cmake.get("devicetree", {})
+
+        return {
+            "include_dirs": dts.get("include-dirs", []),
+            "binding_dirs": dts.get("bindings-dirs", []),
+        }
+
+    def get_zephyr_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            self.run_hello_world_build(build_dir)
+            build_info = self.parse_build_info(build_dir)
+            return self.extract_context(build_info)
+
+    def run(self):
+        self.npx_exe = self.NPX_EXECUTABLE
+        # Get changed DTS files
+        dts_files = [
+            file for file in get_files(filter="d") if file.endswith((".dts", ".dtsi", ".overlay"))
+        ]
+
+        if not self.ensure_npx():
+            self.skip(
+                'dts-linter not installed. To run this check, '
+                'install Node.js and then run [npm --prefix ./scripts/ci ci] command inside '
+                'ZEPHYR_BASE'
+            )
+        if not dts_files:
+            self.skip('No DTS')
+
+        index = self.build_index()
+        visited = self.bfs_dependencies(dts_files, index)
+        board_files = self.find_board_files(visited)
+        skip_vendors = self.get_vendor_skiplist()
+        output = self.build_json(board_files, skip_vendors)
+
+        if not output:
+            self.skip("No board files left after vendor filtering")
+
+        dtsStaticCheck = "dtsStaticCheck.json"
+        ctx = self.get_zephyr_context()
+        include_args = [item for d in ctx["include_dirs"] for item in ("--include", d)]
+        binding_args = [item for d in ctx["binding_dirs"] for item in ("--binding", d)]
+
+        cmd = [
+            self.npx_exe,
+            "--prefix",
+            self.prefix,
+            "--no",
+            "dts-linter",
+            "--",
+            "--outputFormat",
+            "json",
+            "--diagnosticsFull",
+            "--diagnosticsConfig",
+            dtsStaticCheck,
+            *include_args,
+            *binding_args,
+        ]
+
+        try:
+            with open(dtsStaticCheck, "w", encoding="utf-8") as f:
+                json.dump(output, f, indent=2)
+
+            json_output = self._parse_json_output(cmd)
+            if json_output:
+                self._process_json_output(json_output)
+
+        except subprocess.CalledProcessError as ex:
+            stderr_output = ex.stderr if ex.stderr else ""
+            if stderr_output.strip():
+                self.failure(f"dts-linter found issues:\n{stderr_output}")
+            else:
+                err = "dts-linter failed with no output. "
+                err += "Make sure you install Node.js and then run "
+                err += "[npm --prefix ./scripts/ci ci] inside ZEPHYR_BASE"
+                self.failure(err)
+        except RuntimeError as ex:
+            self.failure(f"{ex}")
+
+        os.remove(dtsStaticCheck)
 
 
 class KconfigCheck(ComplianceTest):
@@ -2834,6 +3218,7 @@ def _main(args):
 
     included = list(map(lambda x: x.lower(), args.module))
     excluded = list(map(lambda x: x.lower(), args.exclude_module))
+    case_levels = {}
 
     for testcase in inheritors(ComplianceTest):
         # "Modules" and "testcases" are the same thing. Better flags would have
@@ -2861,6 +3246,17 @@ def _main(args):
             for res in test.fmtd_failures:
                 annotate(res, test.doc)
 
+        # Record severity level per test case for workflow post-processing.
+        # error: at least one error/failure
+        # warnings: only warnings/notices
+        # clean: no findings
+        if test.has_error:
+            case_levels[test.name] = "error"
+        elif test.has_warning:
+            case_levels[test.name] = "warning"
+        else:
+            case_levels[test.name] = "clean"
+
         suite.add_testcase(test.case)
 
     if args.output:
@@ -2868,6 +3264,10 @@ def _main(args):
         xml.add_testsuite(suite)
         xml.update_statistics()
         xml.write(args.output, pretty=True)
+
+    # Export per-test severity levels for check-warns in CI.
+    with open("compliance_case_levels.json", "w", encoding="utf-8") as f:
+        json.dump(case_levels, f, sort_keys=True, indent=2)
 
     failed_cases = []
     warning_cases = []
