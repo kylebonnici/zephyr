@@ -1033,6 +1033,7 @@ class DevicetreeStaticCheck(ComplianceTest):
         results = []
         skip_vendors = skip_vendors or set()
         board_dirs = set[str]()
+        contexts = {}
 
         for bf in board_files:
             board_dir = self.get_board_dir(bf)
@@ -1051,7 +1052,17 @@ class DevicetreeStaticCheck(ComplianceTest):
             filename = os.path.splitext(os.path.basename(bf))[0]
 
             for board_name, meta in west_info.items():
-                if not filename.startswith(f"{board_name}_"):
+                board_targets = [(board_name, board_name)]
+                board_targets.extend(
+                    (f"{board_name}/{qualifier}", f"{board_name}_{qualifier.replace('/', '_')}")
+                    for qualifier in meta.get("qualifiers", [])
+                )
+
+                board_target = next(
+                    (target for target, dts_filename in board_targets if filename == dts_filename),
+                    None,
+                )
+                if board_target is None:
                     continue
 
                 vendor = meta.get("vendor")
@@ -1071,6 +1082,10 @@ class DevicetreeStaticCheck(ComplianceTest):
                 entry = {
                     "mainFile": bf,
                 }
+                if board_target not in contexts:
+                    contexts[board_target] = self.get_zephyr_context(board_target)
+                entry["includePaths"] = contexts[board_target]["include_dirs"]
+                entry["bindingPaths"] = contexts[board_target]["binding_dirs"]
 
                 if overlay_runs:
                     entry["overlayRuns"] = overlay_runs
@@ -1082,7 +1097,7 @@ class DevicetreeStaticCheck(ComplianceTest):
 
         return results
 
-    def run_hello_world_build(self, build_dir: Path):
+    def run_hello_world_build(self, build_dir: Path, board: str):
         sample_dir = Path(ZEPHYR_BASE) / "samples" / "hello_world"
 
         if not sample_dir.exists():
@@ -1091,7 +1106,7 @@ class DevicetreeStaticCheck(ComplianceTest):
         subprocess.run(
             [
                 "cmake",
-                "-DBOARD=native_sim",
+                f"-DBOARD={board}",
                 "-B",
                 str(build_dir),
                 "-S",
@@ -1124,11 +1139,11 @@ class DevicetreeStaticCheck(ComplianceTest):
             "binding_dirs": dts.get("bindings-dirs", []),
         }
 
-    def get_zephyr_context(self):
+    def get_zephyr_context(self, board: str):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             build_dir = tmp_path / "build"
-            self.run_hello_world_build(build_dir)
+            self.run_hello_world_build(build_dir, board)
             build_info = self.parse_build_info(build_dir)
             return self.extract_context(build_info)
 
@@ -1158,9 +1173,6 @@ class DevicetreeStaticCheck(ComplianceTest):
             self.skip("No board files left after vendor filtering")
 
         dtsStaticCheck = "dtsStaticCheck.json"
-        ctx = self.get_zephyr_context()
-        include_args = [item for d in ctx["include_dirs"] for item in ("--include", d)]
-        binding_args = [item for d in ctx["binding_dirs"] for item in ("--binding", d)]
 
         cmd = [
             self.npx_exe,
@@ -1174,8 +1186,6 @@ class DevicetreeStaticCheck(ComplianceTest):
             "--diagnosticsFull",
             "--diagnosticsConfig",
             dtsStaticCheck,
-            *include_args,
-            *binding_args,
         ]
 
         try:
